@@ -1,9 +1,8 @@
 import { exec } from "child_process";
 import cors from "cors";
 import dotenv from "dotenv";
-import voice from "elevenlabs-node";
 import express from "express";
-import { promises as fs } from "fs";
+import fs from "fs";
 import OpenAI from "openai";
 dotenv.config();
 
@@ -11,21 +10,10 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || "-", // Your OpenAI API key here, I used "-" to avoid errors when the key is not set but you should not do that
 });
 
-const elevenLabsApiKey = process.env.ELEVEN_LABS_API_KEY;
-const voiceID = "kgG7dCoKCfLehAPWkJOE";
-
 const app = express();
 app.use(express.json());
 app.use(cors());
 const port = 3000;
-
-app.get("/", (req, res) => {
-  res.send("Hello World!");
-});
-
-app.get("/voices", async (req, res) => {
-  res.send(await voice.getVoices(elevenLabsApiKey));
-});
 
 const execCommand = (command) => {
   return new Promise((resolve, reject) => {
@@ -35,6 +23,18 @@ const execCommand = (command) => {
     });
   });
 };
+
+const textToSpeech = async (message, fileName) => {
+  const mp3 = await openai.audio.speech.create({
+    model: 'tts-1',
+    voice: 'alloy',
+    input: message,
+  });
+  const buffer = Buffer.from(await mp3.arrayBuffer());
+  await fs.promises.writeFile(fileName, buffer);
+
+  return buffer;
+}
 
 const lipSyncMessage = async (message) => {
   const time = new Date().getTime();
@@ -74,18 +74,18 @@ app.post("/chat", async (req, res) => {
     });
     return;
   }
-  if (!elevenLabsApiKey || openai.apiKey === "-") {
+  if (openai.apiKey === "-") {
     res.send({
       messages: [
         {
-          text: "Please my dear, don't forget to add your API keys!",
+          text: "Please my dear, don't forget to add your API key!",
           audio: await audioFileToBase64("audios/api_0.wav"),
           lipsync: await readJsonTranscript("audios/api_0.json"),
           facialExpression: "angry",
           animation: "Angry",
         },
         {
-          text: "You don't want to ruin Wawa Sensei with a crazy ChatGPT and ElevenLabs bill, right?",
+          text: "You don't want to ruin Wawa Sensei with a crazy ChatGPT, right?",
           audio: await audioFileToBase64("audios/api_1.wav"),
           lipsync: await readJsonTranscript("audios/api_1.json"),
           facialExpression: "smile",
@@ -129,10 +129,10 @@ app.post("/chat", async (req, res) => {
     // generate audio file
     const fileName = `audios/message_${i}.mp3`; // The name of your audio file
     const textInput = message.text; // The text you wish to convert to speech
-    await voice.textToSpeech(elevenLabsApiKey, voiceID, fileName, textInput);
+    const audioBuffer = await textToSpeech(textInput, fileName);
     // generate lipsync
     await lipSyncMessage(i);
-    message.audio = await audioFileToBase64(fileName);
+    message.audio = await audioBufferToBase64(audioBuffer);
     message.lipsync = await readJsonTranscript(`audios/message_${i}.json`);
   }
 
@@ -140,13 +140,17 @@ app.post("/chat", async (req, res) => {
 });
 
 const readJsonTranscript = async (file) => {
-  const data = await fs.readFile(file, "utf8");
+  const data = await fs.promises.readFile(file, "utf8");
   return JSON.parse(data);
 };
 
 const audioFileToBase64 = async (file) => {
-  const data = await fs.readFile(file);
+  const data = await fs.promises.readFile(file);
   return data.toString("base64");
+};
+
+const audioBufferToBase64 = async (buffer) => {
+  return buffer.toString("base64");
 };
 
 app.listen(port, () => {
